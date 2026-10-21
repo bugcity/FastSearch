@@ -20,6 +20,7 @@ public partial class App : Application
     private EventWaitHandle? _showEvent;
     private RegisteredWaitHandle? _showRegistration;
     private Forms.NotifyIcon? _tray;
+    private System.Drawing.Icon? _trayIcon;
     private IndexManager? _index;
     private MainWindow? _window;
     private GlobalHotKey? _hotKey;
@@ -64,9 +65,12 @@ public partial class App : Application
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("検索画面を開く", null, (_, _) => Dispatcher.BeginInvoke(() => _window.ShowSearch()));
         menu.Items.Add("終了", null, (_, _) => Dispatcher.BeginInvoke(() => ExitNormally()));
+        using (var iconStream = GetResourceStream(new Uri("/FastSearch;component/Assets/FastSearch.ico", UriKind.Relative)).Stream)
+        using (var icon = new System.Drawing.Icon(iconStream, Forms.SystemInformation.SmallIconSize))
+            _trayIcon = (System.Drawing.Icon)icon.Clone();
         _tray = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = _trayIcon,
             Text = "FastSearch — Cドライブのファイル名検索",
             ContextMenuStrip = menu,
             Visible = true
@@ -122,6 +126,7 @@ public partial class App : Application
         _memory?.Dispose();
         if (_memory?.WriteError is Exception memoryError) IndexManager.Log(memoryError);
         _tray?.Dispose();
+        _trayIcon?.Dispose();
         _tray?.ContextMenuStrip?.Dispose();
         _showEvent?.Dispose();
         if (_ownsMutex) _mutex?.ReleaseMutex();

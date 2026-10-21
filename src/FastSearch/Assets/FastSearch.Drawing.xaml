@@ -1,0 +1,50 @@
+<DrawingImage xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  <DrawingImage.Drawing>
+    <DrawingGroup>
+      <!-- Fix the viewport and keep transparent padding at every icon size. -->
+      <GeometryDrawing Brush="Transparent" Geometry="M0,0 H256 V256 H0 Z" />
+      <!-- Folder tab and back. -->
+      <GeometryDrawing Geometry="M24,64 Q24,42 46,42 H91 Q101,42 108,52 L121,66 H190 Q212,66 212,88 V176 Q212,198 190,198 H46 Q24,198 24,176 Z">
+        <GeometryDrawing.Brush>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#75CEFF" Offset="0" />
+            <GradientStop Color="#286ACF" Offset="1" />
+          </LinearGradientBrush>
+        </GeometryDrawing.Brush>
+      </GeometryDrawing>
+      <!-- Folder front, with a wide, clean silhouette. -->
+      <GeometryDrawing Geometry="M24,93 Q24,78 40,78 H194 Q212,78 212,96 V180 Q212,202 190,202 H46 Q24,202 24,180 Z">
+        <GeometryDrawing.Brush>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="0.85,1">
+            <GradientStop Color="#3F9CFF" Offset="0" />
+            <GradientStop Color="#2469DE" Offset="1" />
+          </LinearGradientBrush>
+        </GeometryDrawing.Brush>
+      </GeometryDrawing>
+      <GeometryDrawing Brush="#86C7FF" Geometry="M40,78 H194 Q207,78 211,90 H25 Q28,78 40,78 Z" />
+      <!-- Two short motion marks suggest fast lookup. -->
+      <GeometryDrawing Brush="#D6EEFF" Geometry="M49,119 H86 Q91,119 91,124 Q91,129 86,129 H49 Q44,129 44,124 Q44,119 49,119 Z" />
+      <GeometryDrawing Brush="#D6EEFF" Geometry="M49,141 H74 Q79,141 79,146 Q79,151 74,151 H49 Q44,151 44,146 Q44,141 49,141 Z" />
+      <!-- A dark rim preserves the magnifier against light and dark desktop backgrounds. -->
+      <GeometryDrawing Geometry="M183,173 L222,212">
+        <GeometryDrawing.Pen><Pen Brush="#163C78" Thickness="26" StartLineCap="Round" EndLineCap="Round" /></GeometryDrawing.Pen>
+      </GeometryDrawing>
+      <GeometryDrawing Geometry="M183,173 L222,212">
+        <GeometryDrawing.Pen><Pen Brush="#F6FBFF" Thickness="14" StartLineCap="Round" EndLineCap="Round" /></GeometryDrawing.Pen>
+      </GeometryDrawing>
+      <GeometryDrawing Brush="#163C78" Geometry="M207,144 A47,47 0 1 1 113,144 A47,47 0 1 1 207,144 Z" />
+      <GeometryDrawing Brush="#F6FBFF" Geometry="M201,144 A41,41 0 1 1 119,144 A41,41 0 1 1 201,144 Z" />
+      <GeometryDrawing Geometry="M188,144 A28,28 0 1 1 132,144 A28,28 0 1 1 188,144 Z">
+        <GeometryDrawing.Brush>
+          <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#BEE9FF" Offset="0" />
+            <GradientStop Color="#5AB5F6" Offset="1" />
+          </LinearGradientBrush>
+        </GeometryDrawing.Brush>
+      </GeometryDrawing>
+      <GeometryDrawing Geometry="M143,139 Q145,128 155,126">
+        <GeometryDrawing.Pen><Pen Brush="#F6FBFF" Thickness="5" StartLineCap="Round" EndLineCap="Round" /></GeometryDrawing.Pen>
+      </GeometryDrawing>
+    </DrawingGroup>
+  </DrawingImage.Drawing>
+</DrawingImage>

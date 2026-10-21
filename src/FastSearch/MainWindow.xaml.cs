@@ -137,6 +137,14 @@ public partial class MainWindow : Window
         e.Cancel = true;
         Hide();
     }
+
+    private void Window_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || _shellMenuOpen) return;
+        e.Handled = true;
+        Hide();
+    }
+
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (Results is not null) QueueSearch(true);

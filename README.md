@@ -37,7 +37,7 @@ dotnet publish src/FastSearch/FastSearch.csproj -c Release -o artifacts/FastSear
 - 左クリックまたは Enter でファイルを既定のアプリで開きます。Ctrl / Shift を伴う選択操作では開きません。ドラッグ開始後は開きません。
 - 右クリック、または Shift+F10 / メニューキーで、そのファイルの従来形式の Windows シェルメニューを表示します。
 - 検索欄の ↓ で結果の先頭行へ移動し、一覧の先頭行で ↑、または一覧で `/` を入力すると検索欄へ戻ります。検索文字列は維持します。
-- ウィンドウの × は非表示にします。索引と変更追跡は継続します。
+- ウィンドウの ×、または検索欄・結果一覧で Esc を押すと非表示にしてトレイへ戻ります。検索文字列・ソート条件を保ち、索引と変更追跡は継続します。
 - トレイアイコンをダブルクリック、または右クリック →「検索画面を開く」で復帰します。
 - `Win + /` でも表示・前面化して検索欄へフォーカスします。登録に失敗した場合は通知とログを残し、トレイ操作を継続します。
 - 終了はトレイの右クリック →「終了」。二重起動した場合は既存の検索画面を表示します。
@@ -57,6 +57,8 @@ OS の終了・ログオフ時は保存待ちを制限し、最新の保存を�
 
 ## 実装
 
+- `Assets/FastSearch.ico`: exe・ウィンドウ・トレイ共通のフォルダ＋虫眼鏡アイコン。16～256pxの9サイズを収録。
+- アイコンの編集元は `Assets/FastSearch.Drawing.xaml`。`pwsh -NoProfile -STA -File tools/Generate-Icon.ps1` で ICO と PNG を再生成できます。
 - `Core/SearchQuery.cs` / `SearchEngine.cs`: ファイル限定の部分一致・フォルダ階層検索。親IDで条件を評価し、フォルダごとの判定とパスを検索中だけ共有します。
 - `Core/IndexManager.cs`: ウィンドウと独立した索引の寿命、1秒間隔の Journal 追跡、変更の集約、復旧・保存。
 - `Native/NtfsVolume.cs`: P/Invoke による MFT 列挙、USN_RECORD_V2 の境界検証、OpenFileById による属性取得。

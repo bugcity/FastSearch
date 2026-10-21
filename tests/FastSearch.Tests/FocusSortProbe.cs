@@ -85,6 +85,20 @@ internal static class FocusSortProbe
                 PumpUntil(() => window.DisplayedResultCount == 3 && !ReferenceEquals(oldResults, grid.ItemsSource));
                 if (window.CurrentSort != savedSort || !search.IsKeyboardFocusWithin) throw new Exception("Query update lost sort or focus");
                 Console.WriteLine("FOCUS SORT: all 4 columns, textbox/list focus after async replacement, selected file, header parity and query persistence passed");
+                foreach (UIElement target in new UIElement[] { search, grid })
+                {
+                    if (target == grid)
+                        search.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Down) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    var escape = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                    target.RaiseEvent(escape);
+                    if (!escape.Handled || window.IsVisible || window.DisplayedResultCount != 0 || app.IsExiting ||
+                        search.Text != "report-" || window.CurrentSort != savedSort)
+                        throw new Exception("Esc did not hide to tray while retaining query, sort and process lifetime");
+                    window.ShowSearch();
+                    PumpUntil(() => window.DisplayedResultCount == 3);
+                    if (!search.IsKeyboardFocusWithin) throw new Exception("Returning from Esc did not focus search");
+                }
+                Console.WriteLine("ESC: textbox/list hide without exit, release results, preserve query/sort and resume search on show");
             }
             catch (Exception ex) { failure = ex; }
             finally { window?.StopSearch(); app?.Shutdown(); }
