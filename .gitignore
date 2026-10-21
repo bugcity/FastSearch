@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+.vs/
+.build-home/
+*.user
+TestResults/
+artifacts/
