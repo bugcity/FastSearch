@@ -19,14 +19,13 @@ public sealed class SearchQuery
         _parts = text.Split('/');
         _firstFolder = ExactFirstFolder ? 1 : 0;
         IsValid = text.Length > 0 && text != "/";
-        // A trailing slash is a useful empty filename prefix; an empty folder is invalid.
+        // A trailing slash is a useful empty filename condition; an empty folder is invalid.
         for (int i = _firstFolder; i < _parts.Length - 1; i++)
             if (_parts[i].Length == 0) IsValid = false;
     }
 
-    public bool MatchesName(IndexEntry entry) => IsValid && !entry.IsDirectory && (HasHierarchy
-        ? entry.Name.StartsWith(FileCondition, StringComparison.OrdinalIgnoreCase)
-        : entry.Name.Contains(FileCondition, StringComparison.OrdinalIgnoreCase));
+    public bool MatchesName(IndexEntry entry) => IsValid && !entry.IsDirectory
+        && entry.Name.Contains(FileCondition, StringComparison.OrdinalIgnoreCase);
 
     public bool MatchesFolders(IndexSnapshot snapshot, ulong parentId)
     {

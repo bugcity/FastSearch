@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -12,14 +11,20 @@ namespace FastSearch.Core;
 
 public sealed class IndexManager : IIndexSource, IDisposable
 {
+    internal static string? LogDirectoryOverride { get; set; }
     private readonly IndexStorage _storage;
     private readonly CancellationTokenSource _stop = new();
     private IndexSnapshot? _snapshot;
     private Task? _worker;
+    private readonly Func<CancellationToken, IIndexVolume> _openVolume;
+    private readonly string _openingStatus;
     public IndexSnapshot? Snapshot => Volatile.Read(ref _snapshot);
     public event Action<string>? StatusChanged;
     public event Action? Changed;
-    public IndexManager(string storagePath) => _storage = new(storagePath);
+    public IndexManager(string storagePath) : this(storagePath, _ => throw new InvalidOperationException("索引ボリュームが指定されていません。")) { }
+    internal IndexManager(string storagePath, Func<CancellationToken, IIndexVolume> openVolume,
+        string openingStatus = "索引ボリュームに接続しています…")
+    { _storage = new(storagePath); _openVolume = openVolume; _openingStatus = openingStatus; }
     public void Start() => _worker = Task.Run(() => RunAsync(_stop.Token));
     private void Status(string text) => StatusChanged?.Invoke(text);
     private void Publish(IndexSnapshot snapshot)
@@ -32,7 +37,8 @@ public sealed class IndexManager : IIndexSource, IDisposable
     {
         try
         {
-            using var volume = new NtfsVolume();
+            Status(_openingStatus);
+            using var volume = _openVolume(token);
             Status("保存済み索引を検証しています…");
             var snapshot = _storage.Load(token);
             snapshot = Recover(volume, snapshot, token);
@@ -76,6 +82,7 @@ public sealed class IndexManager : IIndexSource, IDisposable
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
             Status($"索引更新を停止しました: {ex.Message}");
@@ -83,7 +90,7 @@ public sealed class IndexManager : IIndexSource, IDisposable
         }
     }
 
-    private IndexSnapshot Recover(NtfsVolume volume, IndexSnapshot? candidate, CancellationToken token)
+    private IndexSnapshot Recover(IIndexVolume volume, IndexSnapshot? candidate, CancellationToken token)
     {
         for (int attempt = 0; attempt < 3; attempt++)
         {
@@ -101,7 +108,7 @@ public sealed class IndexManager : IIndexSource, IDisposable
         throw new IOException("USN Journalの継続性を確保できませんでした。少し待ってから再起動してください。");
     }
 
-    private IndexSnapshot Build(NtfsVolume volume, CancellationToken token)
+    private IndexSnapshot Build(IIndexVolume volume, CancellationToken token)
     {
         // If wrap happens during a long build, discard it and start with a new checkpoint.
         for (int attempt = 0; attempt < 3; attempt++)
@@ -109,31 +116,20 @@ public sealed class IndexManager : IIndexSource, IDisposable
             token.ThrowIfCancellationRequested();
             var start = volume.QueryJournal();
             Status("C:\\ のMFTを読み込んでいます…");
-            var records = new Dictionary<ulong, UsnRecord>();
-            foreach (var record in volume.EnumerateMft(token))
+            var entries = IndexTable.CreateBulkBuilder(rejectDuplicates: false);
+            foreach (var entry in volume.EnumerateEntries(token))
             {
-                records[record.Id] = record;
-                if (records.Count % 50_000 == 0) Status($"MFT読み込み中: {records.Count:N0} 件");
+                entries.Add(entry);
+                if (entries.Count % 25_000 == 0) Status($"MFT・属性読み込み中: {entries.Count:N0} 件");
             }
-            var source = records.Values.ToArray();
-            records = null!;
-            var entries = new IndexEntry[source.Length];
-            int completed = 0;
-            Status($"属性取得中: 0 / {source.Length:N0} 件");
-            Parallel.For(0, source.Length, new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = 4 }, i =>
-            {
-                entries[i] = volume.ReadMetadata(source[i]);
-                int count = Interlocked.Increment(ref completed);
-                if (count % 25_000 == 0) Status($"属性取得中: {count:N0} / {source.Length:N0} 件");
-            });
             var snapshot = new IndexSnapshot(volume.Identity, volume.RootId, start.Id, start.NextUsn,
-                entries.ToImmutableDictionary(e => e.Id), (Snapshot?.Revision ?? 0) + 1);
+                entries.ToImmutable(token), (Snapshot?.Revision ?? 0) + 1);
             if (volume.QueryJournal().CanResume(snapshot, volume.Identity)) return snapshot;
         }
         throw new IOException("索引構築中にUSN Journalが繰り返し切り替わりました。Journalの容量を確認して再起動してください。");
     }
 
-    private IndexSnapshot CatchUp(NtfsVolume volume, IndexSnapshot snapshot, CancellationToken token)
+    private IndexSnapshot CatchUp(IIndexVolume volume, IndexSnapshot snapshot, CancellationToken token)
     {
         var state = volume.QueryJournal();
         if (!state.CanResume(snapshot, volume.Identity)) throw new JournalUnavailableException("Journalの継続位置が無効です。");
@@ -143,7 +139,17 @@ public sealed class IndexManager : IIndexSource, IDisposable
             token.ThrowIfCancellationRequested();
             var batch = volume.ReadJournal(snapshot.JournalId, snapshot.NextUsn);
             if (batch.NextUsn <= snapshot.NextUsn) throw new JournalUnavailableException("Journalの継続位置が進みません。");
-            snapshot = ApplyBatch(snapshot, batch, volume.ReadMetadata, token);
+            // Coalesce before IPC so each live file's attributes are requested only once.
+            var latest = new Dictionary<ulong, UsnRecord>();
+            foreach (var record in batch.Records)
+            {
+                token.ThrowIfCancellationRequested();
+                if ((record.Reason & 0x1000) != 0 && (record.Reason & ~0x80001000u) == 0) continue;
+                latest[record.Id] = record;
+            }
+            var attributes = volume.ReadMetadata(latest.Values.Where(r => (r.Reason & 0x200) == 0).ToArray())
+                .ToDictionary(entry => entry.Id);
+            snapshot = ApplyBatch(snapshot, batch, record => attributes[record.Id] with { Name = record.Name }, token);
         }
         if (!volume.QueryJournal().CanResume(snapshot, volume.Identity))
             throw new JournalUnavailableException("差分取得中にJournalが切り替わりました。");
@@ -167,7 +173,13 @@ public sealed class IndexManager : IIndexSource, IDisposable
         {
             token.ThrowIfCancellationRequested();
             if ((record.Reason & 0x200) != 0) entries.Remove(record.Id);
-            else entries[record.Id] = metadata(record);
+            else
+            {
+                var current = record;
+                if (snapshot.Entries.TryGetValue(record.Id, out var previous) && previous.Name == record.Name)
+                    current = record with { Name = previous.Name };
+                entries[record.Id] = metadata(current);
+            }
         }
         return snapshot with { Entries = entries.ToImmutable(), NextUsn = batch.NextUsn, Revision = snapshot.Revision + 1 };
     }
@@ -211,11 +223,11 @@ public sealed class IndexManager : IIndexSource, IDisposable
     {
         try
         {
-            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FastSearch");
+            string folder = LogDirectoryOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FastSearch");
             Directory.CreateDirectory(folder);
             File.AppendAllText(Path.Combine(folder, "error.log"), $"{DateTime.Now:O} {ex}\n");
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
-    public void Dispose() { _stop.Dispose(); }
+    public void Dispose() { _stop.Cancel(); _stop.Dispose(); }
 }

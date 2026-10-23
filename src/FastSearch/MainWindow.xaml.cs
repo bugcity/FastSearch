@@ -14,6 +14,7 @@ using System.Windows.Threading;
 using FastSearch.Core;
 using FastSearch.Diagnostics;
 using FastSearch.Native;
+using FastSearch.Themes;
 
 namespace FastSearch;
 
@@ -32,15 +33,27 @@ public partial class MainWindow : Window
     private readonly FilePointerGesture _gesture = new();
     private SearchResult? _pressedItem;
     private bool _deferredSelection;
+    private readonly Func<bool> _keepRunningInTray;
+    private readonly Action _requestExit;
+    private bool _focusSearchRequested = true, _selectQueryOnFocus, _focusQueued;
+    public event Action? SettingsRequested;
+    public event Action<SortOrder>? SortOrderChanged;
     public int DisplayedResultCount => Volatile.Read(ref _displayedResultCount);
     internal SortOrder CurrentSort => _sort;
 
-    public MainWindow(IIndexSource index, MemoryDiagnostics? memory = null)
+    public MainWindow(IIndexSource index, MemoryDiagnostics? memory = null,
+        Func<bool>? keepRunningInTray = null, Action? requestExit = null, SortOrder? initialSort = null)
     {
         _index = index;
         _memory = memory;
+        _keepRunningInTray = keepRunningInTray ?? (() => true);
+        _requestExit = requestExit ?? (() => ((App)Application.Current).RequestExit());
+        _sort = initialSort ?? new(SortColumn.Name);
+        if (!Enum.IsDefined(_sort.Column)) throw new ArgumentOutOfRangeException(nameof(initialSort));
+        ThemeManager.Ensure();
         InitializeComponent();
-        Results.Columns[0].SortDirection = ListSortDirection.Ascending;
+        ThemeManager.Attach(this);
+        UpdateSortHeaders();
         CommandBindings.Add(new CommandBinding(SortByColumnCommand, (_, e) =>
         {
             if (e.Parameter is SortColumn column) ChangeSort(column);
@@ -54,7 +67,9 @@ public partial class MainWindow : Window
         }
         _index.StatusChanged += OnStatus;
         _index.Changed += OnIndexChanged;
-        Loaded += (_, _) => SearchBox.Focus();
+        Loaded += (_, _) => ScheduleSearchFocus();
+        ContentRendered += (_, _) => ScheduleSearchFocus();
+        Activated += (_, _) => ScheduleSearchFocus();
         IsVisibleChanged += (_, _) => UpdateVisibility();
         StateChanged += (_, _) => UpdateVisibility();
         Deactivated += (_, _) => ResetPointer();
@@ -67,7 +82,15 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             Interlocked.Exchange(ref _statusQueued, 0);
-            if (!_closed && Volatile.Read(ref _uiActive) != 0) IndexStatus.Text = Volatile.Read(ref _latestStatus);
+            if (!_closed && Volatile.Read(ref _uiActive) != 0)
+            {
+                IndexStatus.Text = Volatile.Read(ref _latestStatus);
+                if (!_index.IsReady)
+                {
+                    EmptyHint.Text = IndexStatus.Text;
+                    EmptyHint.Visibility = Visibility.Visible;
+                }
+            }
         });
     }
     private void OnIndexChanged()
@@ -108,26 +131,45 @@ public partial class MainWindow : Window
 
     private void ReleaseResults()
     {
+        var previous = Results.ItemsSource as ISearchResults;
         Results.SelectedItems.Clear();
         Results.CurrentCell = default;
         Results.ItemsSource = Array.Empty<SearchResult>();
+        previous?.Dispose();
         Volatile.Write(ref _displayedResultCount, 0);
         ResultStatus.Text = "0 件";
     }
 
     public void ShowSearch()
     {
+        _focusSearchRequested = true;
+        _selectQueryOnFocus = true;
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         Topmost = true;
         Topmost = false;
         FocusSearch(true);
+        ScheduleSearchFocus();
+    }
+
+    private void ScheduleSearchFocus()
+    {
+        if (!_focusSearchRequested || _focusQueued || _closed) return;
+        _focusQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        {
+            _focusQueued = false;
+            if (!_focusSearchRequested || _closed || !IsLoaded || !IsVisible || !IsActive) return;
+            FocusSearch(_selectQueryOnFocus);
+            if (SearchBox.IsKeyboardFocusWithin) _focusSearchRequested = _selectQueryOnFocus = false;
+        }));
     }
 
     private void FocusSearch(bool selectAll = false)
     {
         SearchBox.Focus();
+        Keyboard.Focus(SearchBox);
         if (selectAll) SearchBox.SelectAll();
     }
 
@@ -135,14 +177,23 @@ public partial class MainWindow : Window
     {
         if (((App)Application.Current).IsExiting) return;
         e.Cancel = true;
-        Hide();
+        CloseSearch();
     }
+
+    private void CloseSearch()
+    {
+        _focusSearchRequested = _selectQueryOnFocus = false;
+        if (_keepRunningInTray()) Hide();
+        else _requestExit();
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke();
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Escape || _shellMenuOpen) return;
         e.Handled = true;
-        Hide();
+        CloseSearch();
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -159,17 +210,18 @@ public partial class MainWindow : Window
         _searchCancellation = cancellation;
         var token = cancellation.Token;
         string query = SearchBox.Text;
-        var snapshot = _index.Snapshot;
         var sort = _sort;
+        ulong? selectedId = (Results.CurrentItem as SearchResult ?? Results.SelectedItem as SearchResult)?.Id;
+        ISearchResults? pending = null;
         if (debounce) ReleaseResults();
         _refreshPending = false;
         _searchRunning = true;
         try
         {
-            if (query.Length == 0 || snapshot is null)
+            if (query.Length == 0 || !_index.IsReady)
             {
                 ReleaseResults();
-                EmptyHint.Text = query.Length == 0 ? "検索する名前を入力してください" : "索引を準備しています…";
+                EmptyHint.Text = !_index.IsReady ? Volatile.Read(ref _latestStatus) : "検索する名前を入力してください";
                 EmptyHint.Visibility = Visibility.Visible;
                 return;
             }
@@ -178,10 +230,11 @@ public partial class MainWindow : Window
             _memory?.Record("searching", DisplayedResultCount, CountRealizedRows(Results));
             using var memorySampling = _memory?.SampleDuringSearch();
             var watch = Stopwatch.StartNew();
-            var results = await Task.Run(() => SearchEngine.Search(snapshot, query, sort, token), token);
+            var results = pending = await _index.SearchAsync(query, sort, selectedId, token);
             if (generation != _generation || token.IsCancellationRequested || _closed || Volatile.Read(ref _uiActive) == 0) return;
             if (_shellMenuOpen) { _refreshPending = true; return; }
             ApplyResults(results);
+            pending = null;
             Volatile.Write(ref _displayedResultCount, results.Length);
             ResultStatus.Text = $"{results.Length:N0} 件 · {watch.ElapsedMilliseconds:N0} ms";
             EmptyHint.Text = "一致するファイルはありません";
@@ -200,6 +253,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            pending?.Dispose();
             if (generation == _generation)
             {
                 _searchRunning = false;
@@ -210,15 +264,17 @@ public partial class MainWindow : Window
         }
     }
 
-    internal void ApplyResults(SearchResult[] results)
+    internal void ApplyResults(ISearchResults results)
     {
         // Inspect focus at publication time so an older sort cannot steal focus after the user moves.
         bool restoreRowFocus = IsActive && Results.IsKeyboardFocusWithin && GetRow(Keyboard.FocusedElement as DependencyObject) is not null;
         ulong? currentId = (Results.CurrentItem as SearchResult ?? Results.SelectedItem as SearchResult)?.Id;
         var column = Results.CurrentCell.Column ?? Results.Columns[0];
+        var previous = Results.ItemsSource as ISearchResults;
         Results.ItemsSource = results;
+        previous?.Dispose();
         if (!restoreRowFocus) return;
-        SearchResult? selected = currentId is ulong id ? Array.Find(results, item => item.Id == id) : null;
+        SearchResult? selected = currentId is ulong id ? results.FindById(id) : null;
         selected ??= results.FirstOrDefault();
         if (selected is null) { Results.Focus(); return; }
         Results.SelectedItem = selected;
@@ -246,6 +302,7 @@ public partial class MainWindow : Window
         if (e.Key != Key.Down) return;
         e.Handled = true;
         if (Results.Items.Count == 0) return;
+        _focusSearchRequested = _selectQueryOnFocus = false;
         Results.SelectedIndex = 0;
         Results.CurrentCell = new DataGridCellInfo(Results.Items[0], Results.Columns[0]);
         Results.ScrollIntoView(Results.Items[0]);
@@ -258,8 +315,8 @@ public partial class MainWindow : Window
     private void Results_KeyDown(object sender, KeyEventArgs e)
     {
         int currentIndex = GetRow(Keyboard.FocusedElement as DependencyObject)?.GetIndex() ?? Results.SelectedIndex;
-        bool slash = e.Key == Key.Divide || (e.Key == Key.OemQuestion && Keyboard.Modifiers == ModifierKeys.None);
-        if ((e.Key == Key.Up && currentIndex == 0) || slash)
+        // Character shortcuts use PreviewTextInput, after keyboard layout/remapping translation.
+        if (e.Key == Key.Up && currentIndex == 0)
         {
             e.Handled = true;
             FocusSearch();
@@ -303,10 +360,25 @@ public partial class MainWindow : Window
     private void ChangeSort(SortColumn column)
     {
         _sort = new(column, _sort.Column == column && !_sort.Descending);
-        foreach (var item in Results.Columns)
-            item.SortDirection = ColumnFor(item) == column
-                ? (_sort.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending) : null;
+        UpdateSortHeaders();
+        SortOrderChanged?.Invoke(_sort);
         QueueSearch(false);
+    }
+
+    private void UpdateSortHeaders()
+    {
+        foreach (var item in Results.Columns)
+        {
+            var column = ColumnFor(item);
+            string name = column switch
+            {
+                SortColumn.Folder => "フォルダ", SortColumn.Size => "サイズ",
+                SortColumn.Modified => "更新日時", _ => "名前"
+            };
+            item.Header = column == _sort.Column ? name + (_sort.Descending ? " ↓" : " ↑") : name;
+            item.SortDirection = column == _sort.Column
+                ? (_sort.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending) : null;
+        }
     }
 
     private static DataGridRow? GetRow(DependencyObject? source)
@@ -322,6 +394,7 @@ public partial class MainWindow : Window
 
     private void Results_MouseDown(object sender, MouseButtonEventArgs e)
     {
+        _focusSearchRequested = _selectQueryOnFocus = false;
         ResetPointer();
         var row = GetRow(e.OriginalSource as DependencyObject);
         if (row?.Item is not SearchResult result) return;
@@ -355,7 +428,7 @@ public partial class MainWindow : Window
         _pressedItem = null;
         // CF_HDROP uses full filesystem paths; the shell/drop target owns copy/move/link semantics.
         var paths = new StringCollection();
-        paths.AddRange(Results.SelectedItems.OfType<SearchResult>().Select(r => r.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        paths.AddRange(Results.SelectedItems.OfType<SearchResult>().Where(r => r.IsLoaded).Select(r => r.FullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
         if (paths.Count == 0) return;
         var data = new DataObject();
         data.SetFileDropList(paths);
@@ -374,6 +447,7 @@ public partial class MainWindow : Window
 
     private void OpenFile(SearchResult result)
     {
+        if (!result.IsLoaded) return;
         try { ShellFileActions.Open(result.FullPath); }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException or ArgumentException)
         { ReportShellError("ファイルを開けませんでした", ex); }
@@ -393,7 +467,7 @@ public partial class MainWindow : Window
 
     private void ShowShellMenu(SearchResult result, Point point)
     {
-        if (_shellMenuOpen) return;
+        if (_shellMenuOpen || !result.IsLoaded) return;
         _shellMenuOpen = true;
         try { ShellFileActions.ShowContextMenu(this, result.FullPath, point); }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or ExternalException or InvalidOperationException or ArgumentException)

@@ -7,16 +7,16 @@ namespace FastSearch.Core;
 public static class SearchEngine
 {
     // A snapshot is immutable: indexing never holds a lock while a search runs.
-    public static SearchResult[] Search(IndexSnapshot snapshot, string query, SortOrder order,
+    public static SearchResults Search(IndexSnapshot snapshot, string query, SortOrder order,
         CancellationToken cancellationToken)
     {
         var condition = new SearchQuery(query);
-        if (!condition.IsValid) return [];
-        var results = new List<SearchResult>();
+        if (!condition.IsValid) return SearchResults.Empty;
+        var results = new HitBuffer();
         var paths = new Dictionary<ulong, string?> { [snapshot.RootId] = @"C:\" };
         var folderMatches = condition.HasHierarchy ? new Dictionary<ulong, bool>() : null;
         int visited = 0;
-        foreach (var entry in snapshot.Entries.Values)
+        foreach (var (position, entry) in snapshot.Entries.PositionedEntries)
         {
             if ((visited++ & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (!condition.MatchesName(entry)) continue;
@@ -27,25 +27,27 @@ public static class SearchEngine
                 if (!matches) continue;
             }
             string? parent = ResolveDirectory(snapshot, entry.ParentId, paths);
-            if (parent is not null) results.Add(new SearchResult(entry, parent));
+            if (parent is not null) results.Add(new SearchHit(position, parent));
         }
-        var array = results.ToArray();
+        var array = results.ToArray(cancellationToken);
         int comparisons = 0;
         try
         {
             Array.Sort(array, (a, b) =>
             {
                 if ((comparisons++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                ref readonly var left = ref snapshot.Entries.At(a.Position);
+                ref readonly var right = ref snapshot.Entries.At(b.Position);
                 int value = order.Column switch
                 {
                     SortColumn.Folder => StringComparer.OrdinalIgnoreCase.Compare(a.Folder, b.Folder),
-                    SortColumn.Size => Nullable.Compare(a.Entry.IsDirectory ? null : a.Entry.Size,
-                        b.Entry.IsDirectory ? null : b.Entry.Size),
-                    SortColumn.Modified => Nullable.Compare(a.Entry.ModifiedUtc, b.Entry.ModifiedUtc),
-                    _ => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name)
+                    SortColumn.Size => Nullable.Compare(left.IsDirectory ? null : left.Size,
+                        right.IsDirectory ? null : right.Size),
+                    SortColumn.Modified => Nullable.Compare(left.ModifiedUtc, right.ModifiedUtc),
+                    _ => StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name)
                 };
                 if (value != 0) return order.Descending ? -Math.Sign(value) : Math.Sign(value);
-                return a.Id.CompareTo(b.Id);
+                return left.Id.CompareTo(right.Id);
             });
         }
         catch (InvalidOperationException) when (cancellationToken.IsCancellationRequested)
@@ -53,7 +55,36 @@ public static class SearchEngine
             throw new OperationCanceledException(cancellationToken);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        return array;
+        return new SearchResults(snapshot.Entries, array);
+    }
+
+    private sealed class HitBuffer
+    {
+        private const int BlockSize = 1024;
+        private readonly List<SearchHit[]> _blocks = new();
+        private int _count;
+        public void Add(SearchHit hit)
+        {
+            int offset = _count % BlockSize;
+            if (offset == 0) _blocks.Add(new SearchHit[BlockSize]);
+            _blocks[^1][offset] = hit;
+            _count++;
+        }
+        public SearchHit[] ToArray(CancellationToken token)
+        {
+            var hits = new SearchHit[_count];
+            int copied = 0;
+            foreach (var block in _blocks)
+            {
+                token.ThrowIfCancellationRequested();
+                int length = Math.Min(BlockSize, _count - copied);
+                Array.Copy(block, 0, hits, copied, length);
+                copied += length;
+            }
+            _blocks.Clear();
+            _count = 0;
+            return hits;
+        }
     }
 
     public static string? ResolveDirectory(IndexSnapshot snapshot, ulong id, Dictionary<ulong, string?> cache)

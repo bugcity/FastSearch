@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/FastSearch/FastSearch.csproj" />
+    <Project Path="src/FastSearch.Worker/FastSearch.Worker.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FastSearch.Tests/FastSearch.Tests.csproj" />

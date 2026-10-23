@@ -18,12 +18,14 @@ public sealed class MemoryDiagnostics : IDisposable
     private string _state = "startup";
     private int _indexCount, _resultCount, _realizedRows;
     private int _disposed;
+    private readonly Func<int>? _workerProcessId;
     public string Path { get; }
     public Exception? WriteError { get; private set; }
 
-    public MemoryDiagnostics(string path, TimeSpan? interval = null)
+    public MemoryDiagnostics(string path, TimeSpan? interval = null, Func<int>? workerProcessId = null)
     {
         Path = path;
+        _workerProcessId = workerProcessId;
         _writer = Task.Run(WriteAsync);
         _periodic = Task.Run(async () =>
         {
@@ -57,9 +59,17 @@ public sealed class MemoryDiagnostics : IDisposable
         {
             using var process = Process.GetCurrentProcess();
             long privateBytes = process.PrivateMemorySize64;
+            int workerPid = _workerProcessId?.Invoke() ?? 0;
+            long? workerBytes = workerPid == 0 ? 0 : null;
+            if (workerPid != 0)
+            {
+                try { using var worker = Process.GetProcessById(workerPid); workerBytes = worker.PrivateMemorySize64; }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
+            long? totalBytes = workerBytes is long bytes ? privateBytes + bytes : null;
             string safeState = state.Replace('"', '\'');
             _samples.Writer.TryWrite(string.Create(CultureInfo.InvariantCulture,
-                $"{DateTimeOffset.Now:O},{Environment.ProcessId},\"{safeState}\",{Volatile.Read(ref _indexCount)},{Volatile.Read(ref _resultCount)},{privateBytes},{GC.GetTotalMemory(false)},{Volatile.Read(ref _realizedRows)}"));
+                $"{DateTimeOffset.Now:O},{Environment.ProcessId},\"{safeState}\",{Volatile.Read(ref _indexCount)},{Volatile.Read(ref _resultCount)},{privateBytes},{GC.GetTotalMemory(false)},{Volatile.Read(ref _realizedRows)},{workerPid},{workerBytes},{totalBytes}"));
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         { WriteError = ex; }
@@ -79,7 +89,7 @@ public sealed class MemoryDiagnostics : IDisposable
                     if (writer is null)
                     {
                         writer = new StreamWriter(new FileStream(Path, FileMode.Create, FileAccess.Write, FileShare.Read));
-                        await writer.WriteLineAsync("timestamp,pid,state,index_count,result_count,private_bytes,managed_bytes,realized_rows").ConfigureAwait(false);
+                        await writer.WriteLineAsync("timestamp,pid,state,index_count,result_count,private_bytes,managed_bytes,realized_rows,worker_pid,worker_private_bytes,total_private_bytes").ConfigureAwait(false);
                     }
                     await writer.WriteLineAsync(sample).ConfigureAwait(false);
                     await writer.FlushAsync().ConfigureAwait(false);

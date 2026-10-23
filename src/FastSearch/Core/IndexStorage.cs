@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Immutable;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,7 +29,7 @@ public sealed class IndexStorage(string path)
             long next = reader.ReadInt64();
             int count = reader.ReadInt32();
             if (count < 0 || count > 20_000_000 || next < 0 || root == 0) return null;
-            var entries = ImmutableDictionary.CreateBuilder<ulong, IndexEntry>();
+            var entries = IndexTable.CreateBulkBuilder(count);
             for (int i = 0; i < count; i++)
             {
                 if ((i & 1023) == 0) token.ThrowIfCancellationRequested();
@@ -39,12 +38,12 @@ public sealed class IndexStorage(string path)
                 bool directory = reader.ReadBoolean();
                 long size = reader.ReadInt64(), ticks = reader.ReadInt64();
                 if (name.Length == 0 || name.IndexOfAny(['\\', '/', '\0']) >= 0 || size < -1 ||
-                    ticks < -1 || ticks > DateTime.MaxValue.Ticks || entries.ContainsKey(id)) return null;
-                entries.Add(id, new(id, parent, name, directory, size < 0 ? null : size,
+                    ticks < -1 || ticks > DateTime.MaxValue.Ticks) return null;
+                entries.Add(new(id, parent, name, directory, size < 0 ? null : size,
                     ticks < 0 ? null : new DateTime(ticks, DateTimeKind.Utc)));
             }
             if (file.Position != file.Length) return null;
-            return new(identity, root, journal, next, entries.ToImmutable());
+            return new(identity, root, journal, next, entries.ToImmutable(token));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or OverflowException)
         {

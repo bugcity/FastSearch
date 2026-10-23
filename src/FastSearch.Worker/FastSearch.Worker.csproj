@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+    <Compile Include="../FastSearch/Core/IndexManager.cs" Link="Shared/IndexManager.cs" />
+    <Compile Include="../FastSearch/Core/IndexStorage.cs" Link="Shared/IndexStorage.cs" />
+    <Compile Include="../FastSearch/Core/IIndexSource.cs" Link="Shared/IIndexSource.cs" />
+    <Compile Include="../FastSearch/Core/SearchEngine.cs" Link="Shared/SearchEngine.cs" />
+    <Compile Include="../FastSearch/Core/SearchQuery.cs" Link="Shared/SearchQuery.cs" />
+    <Compile Include="../FastSearch/Core/SearchResults.cs" Link="Shared/SearchResults.cs" />
+    <Compile Include="../FastSearch/Ipc/ServiceProtocol.cs" Link="Shared/ServiceProtocol.cs" />
+    <Compile Include="../FastSearch/Ipc/ServiceSession.cs" Link="Shared/ServiceSession.cs" />
+    <Compile Include="../FastSearch/Core/IndexEntry.cs" Link="Shared/IndexEntry.cs" />
+    <Compile Include="../FastSearch/Core/IndexTable.cs" Link="Shared/IndexTable.cs" />
+    <Compile Include="../FastSearch/Core/IndexNamePool.cs" Link="Shared/IndexNamePool.cs" />
+    <Compile Include="../FastSearch/Core/IIndexVolume.cs" Link="Shared/IIndexVolume.cs" />
+    <Compile Include="../FastSearch/Native/NtfsVolume.cs" Link="Shared/NtfsVolume.cs" />
+    <Compile Include="../FastSearch/Ipc/VolumeProtocol.cs" Link="Shared/VolumeProtocol.cs" />
+  </ItemGroup>
+</Project>

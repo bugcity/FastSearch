@@ -1,11 +1,16 @@
 using System.Buffers.Binary;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
 using FastSearch.Core;
 using FastSearch.Native;
 using FastSearch.Diagnostics;
+
+if (args.Length == 3 && args[0] == "--service-client-probe")
+{
+    ServiceProbe.RunClient(args[1], int.Parse(args[2]));
+    return;
+}
 
 if (args.Contains("--focus-probe"))
 {
@@ -17,7 +22,8 @@ if (args.Contains("--memory-profile"))
 {
     string output = Path.GetFullPath(args.SkipWhile(x => x != "--memory-profile").Skip(1).FirstOrDefault()
         ?? Path.Combine(AppContext.BaseDirectory, "memory-profile.csv"));
-    MemoryProfile.Run(output);
+    int Option(string name, int fallback) => int.TryParse(args.SkipWhile(x => x != name).Skip(1).FirstOrDefault(), out int value) ? value : fallback;
+    MemoryProfile.Run(output, Option("--profile-files", 300000), args.Contains("--unique-names"), Option("--profile-cycles", 30));
     return;
 }
 
@@ -43,13 +49,42 @@ var source = new[]
     new IndexEntry(18, 17, "cycle", true, null, null),
     new IndexEntry(19, 10, "unknown.txt", false, null, null)
 };
-var snapshot = new IndexSnapshot("test-volume", 5, 123, 100, source.ToImmutableDictionary(e => e.Id));
-SearchResult[] Search(string query, SortColumn column = SortColumn.Name, bool desc = false) =>
+var snapshot = new IndexSnapshot("test-volume", 5, 123, 100, IndexTable.FromEntries(source));
+var tableBuilder = IndexTable.CreateBuilder();
+var expectedTable = new Dictionary<ulong, IndexEntry>();
+var frozenTables = new List<(IndexTable Table, Dictionary<ulong, IndexEntry> Expected)>();
+var random = new Random(42);
+for (int i = 0; i < 1000; i++)
+{
+    ulong id = (ulong)(1 + random.Next(64) * 4096); // Deliberate same-shard collisions.
+    if (random.Next(3) == 0)
+    {
+        tableBuilder.Remove(id);
+        expectedTable.Remove(id);
+    }
+    else
+    {
+        var entry = new IndexEntry(id, 5, $"item-{i}", false, i, time);
+        tableBuilder[id] = entry;
+        expectedTable[id] = entry;
+    }
+    if (i % 50 == 0) frozenTables.Add((tableBuilder.ToImmutable(), new(expectedTable)));
+}
+Check(frozenTables.All(pair => pair.Table.Count == pair.Expected.Count && pair.Expected.All(entry =>
+    pair.Table.TryGetValue(entry.Key, out var actual) && actual == entry.Value) && pair.Table.Values.Count() == pair.Table.Count),
+    "compact index: collisions, add/update/delete and reused builder preserve all previous snapshots");
+var sharedNames = IndexTable.FromEntries([
+    new IndexEntry(1,5,new string("shared.txt".ToCharArray()),false,1,null),
+    new IndexEntry(2,5,new string("shared.txt".ToCharArray()),false,2,null),
+    new IndexEntry(3,5,"SHARED.TXT",false,3,null)]);
+Check(ReferenceEquals(sharedNames[1].Name, sharedNames[2].Name) && sharedNames[3].Name == "SHARED.TXT",
+    "repeated names share storage without changing displayed case");
+SearchResults Search(string query, SortColumn column = SortColumn.Name, bool desc = false) =>
     SearchEngine.Search(snapshot, query, new(column, desc), CancellationToken.None);
 Check(Search("").Length == 0, "empty query has no results");
 Check(Search("rEpOrT").Length == 3, "case-insensitive filename substring");
 Check(Search("Documents").Length == 0 && Search("日本語").Length == 0, "folders remain indexed but are excluded from results");
-Check(Search("資料/テスト").Single().Folder == @"C:\日本語の資料", "Japanese folder suffix and file prefix");
+Check(Search("資料/テスト").Single().Folder == @"C:\日本語の資料", "Japanese folder suffix and file substring");
 Check(Search("テスト").Single().Folder == @"C:\日本語の資料", "parent path reconstruction");
 Check(Search("Documents\\Report").Length == 0, "query matches name only, not parent path");
 Check(Search("orphan").Length == 0 && Search("cycle").Length == 0, "missing parents and cycles do not hang or produce false paths");
@@ -79,7 +114,7 @@ string[] hierarchyFiles =
     @"work\var\data\repository.cs", @"myvar\data\report.xlsx", @"var\data\sub\report.xlsx",
     @"work\svar\repo.txt", @"work\var\report.CS", @"repo-root.txt", @"var\data\repo"
 ];
-var hierarchyEntries = ImmutableDictionary.CreateBuilder<ulong, IndexEntry>();
+var hierarchyEntries = IndexTable.CreateBuilder();
 hierarchyEntries[5] = source[0];
 var folderIds = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase) { [""] = 5 };
 ulong nextId = 100;
@@ -110,14 +145,17 @@ void MatchPaths(string query, params string[] expected) => Check(HierarchySearch
 MatchPaths("repo", hierarchyFiles);
 MatchPaths("var/repo", @"work\svar\repo.txt", @"work\var\report.CS");
 string[] suffixPaths = [@"var\data\report.xlsx", @"work\myvar\data\repository.cs", @"projects\var\data\repo.txt",
-    @"work\var\data\repository.cs", @"myvar\data\report.xlsx", @"var\data\repo"];
+    @"work\var\data\repository.cs", @"myvar\data\report.xlsx", @"var\data\repo", @"var\data\myreport.xlsx"];
 MatchPaths("var/data/repo", suffixPaths);
 MatchPaths("VaR/DaTa/RePo", suffixPaths);
-string[] exactPaths = [@"var\data\report.xlsx", @"projects\var\data\repo.txt", @"work\var\data\repository.cs", @"var\data\repo"];
+string[] exactPaths = [@"var\data\report.xlsx", @"projects\var\data\repo.txt", @"work\var\data\repository.cs", @"var\data\repo", @"var\data\myreport.xlsx"];
 MatchPaths("/var/data/repo", exactPaths);
 MatchPaths("/var/repo", @"work\var\report.CS");
-MatchPaths("/var/data/", [.. exactPaths, @"var\data\myreport.xlsx"]);
+MatchPaths("/var/data/", exactPaths);
 MatchPaths("var/data/myrepo", @"var\data\myreport.xlsx");
+MatchPaths("/repo", hierarchyFiles);
+MatchPaths("/var/data/REPORT", @"var\data\report.xlsx", @"var\data\myreport.xlsx");
+MatchPaths("/var/data/xlsx", @"var\data\report.xlsx", @"var\data\myreport.xlsx");
 MatchPaths("/");
 MatchPaths("//repo");
 MatchPaths("var//repo");
@@ -241,13 +279,19 @@ try
 finally { Directory.Delete(temp, true); }
 
 // Synthetic benchmark measures the actual search/sort implementation, with no drive scan.
-var builder = ImmutableDictionary.CreateBuilder<ulong, IndexEntry>();
+var builder = IndexTable.CreateBuilder();
 builder[5] = source[0];
 for (ulong i = 100; i < 300100; i++) builder[i] = new(i, 5, $"file-{i:D8}.txt", false, (long)i, time);
 var large = snapshot with { Entries = builder.ToImmutable() };
 var watch = Stopwatch.StartNew();
 var matches = SearchEngine.Search(large, "file-", new(SortColumn.Size, true), default);
+Check(matches.CachedRowCount == 0, "large search does not create one presentation object per result");
 Check(matches.Length == 300000 && matches[0].Entry.Size == 300099, "300,000-result search and numeric sort");
+var originalFirst = matches[0];
+for (int i = 0; i < matches.Length; i += 257) _ = matches[i];
+Check(matches.CachedRowCount <= 512 && ((System.Collections.IList)matches).IndexOf(originalFirst) == 0 &&
+    ((System.Collections.IList)matches).IndexOf(matches[^1]) == matches.Length - 1,
+    "lazy results retain all matches, bound the row cache, and find items after eviction");
 Console.WriteLine($"BENCHMARK: 300,000 entries, {matches.Length:N0} matches, {watch.ElapsedMilliseconds} ms, managed heap {GC.GetTotalMemory(false) / 1024 / 1024} MB");
 
 Exception? uiError = null;
@@ -338,7 +382,7 @@ var uiThread = new Thread(() =>
         var slash = new System.Windows.Input.KeyEventArgs(keyboard, keySource, 0, System.Windows.Input.Key.OemQuestion)
             { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
         grid.RaiseEvent(slash);
-        if (!slash.Handled || searchBox.Text != "var/data/repo") throw new Exception("Slash key navigation failed");
+        if (slash.Handled || searchBox.Text != "var/data/repo") throw new Exception("Raw slash key must not preempt remapped text input");
         bool registeredFirst;
         using (var firstHotKey = new GlobalHotKey(() => { }))
         {
@@ -389,4 +433,8 @@ if (args.Contains("--ntfs"))
     var changes = volume.ReadJournal(state.Id, state.NextUsn);
     Check(changes.NextUsn >= state.NextUsn, "live journal continuation");
 }
+IpcProbe.Run(Check);
+ServiceProbe.Run(Check);
+SettingsProbe.Run(Check);
+PackedIndexProbe.Run(Check);
 Console.WriteLine($"All {passed} checks passed.");

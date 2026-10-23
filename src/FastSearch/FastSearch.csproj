@@ -11,8 +11,19 @@
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="../../tools/Setup-Service.ps1" Link="Setup-Service.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../tools/Get-ServiceDiagnostics.ps1" Link="Get-ServiceDiagnostics.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+    <WorkerFiles Include="../FastSearch.Worker/bin/$(Configuration)/$(TargetFramework)/FastSearch.Worker.exe;../FastSearch.Worker/bin/$(Configuration)/$(TargetFramework)/FastSearch.Worker.dll;../FastSearch.Worker/bin/$(Configuration)/$(TargetFramework)/FastSearch.Worker.deps.json;../FastSearch.Worker/bin/$(Configuration)/$(TargetFramework)/FastSearch.Worker.runtimeconfig.json" />
+    <ProjectReference Include="../FastSearch.Worker/FastSearch.Worker.csproj" ReferenceOutputAssembly="false" />
     <Resource Include="Assets\FastSearch.ico" />
     <Page Remove="Assets\FastSearch.Drawing.xaml" />
     <None Include="Assets\FastSearch.Drawing.xaml" />
   </ItemGroup>
+  <Target Name="CopyIndexWorker" AfterTargets="Build">
+    <Copy SourceFiles="@(WorkerFiles)" DestinationFolder="$(OutDir)" />
+  </Target>
+  <Target Name="PublishIndexWorker" AfterTargets="Publish">
+    <Copy SourceFiles="@(WorkerFiles)" DestinationFolder="$(PublishDir)" />
+  </Target>
 </Project>

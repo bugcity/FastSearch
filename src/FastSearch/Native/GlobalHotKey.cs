@@ -2,10 +2,11 @@ using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using FastSearch.Settings;
 
 namespace FastSearch.Native;
 
-public sealed class GlobalHotKey : IDisposable
+public sealed class GlobalHotKey : IDisposable, IHotKeyRegistration
 {
     private const int Id = 0x4653;
     private readonly HwndSource _source;
@@ -14,21 +15,16 @@ public sealed class GlobalHotKey : IDisposable
     public bool IsRegistered => _registered;
     public int RegistrationError { get; }
 
-    public GlobalHotKey(Action show)
+    public GlobalHotKey(Action show) : this(show, HotKeySetting.Default) { }
+    public GlobalHotKey(Action show, HotKeySetting setting)
     {
+        setting.Validate();
         _show = show;
         // A message-only window remains alive when the search window is hidden.
         _source = new HwndSource(new HwndSourceParameters("FastSearch.HotKey") { ParentWindow = new IntPtr(-3) });
         _source.AddHook(HandleMessage);
-        // Translate the character for the active keyboard layout (US/Japanese layouts included).
-        short key = VkKeyScanW('/');
-        if (key == -1) { RegistrationError = 87; return; }
-        uint modifiers = 0x0008 | 0x4000; // MOD_WIN | MOD_NOREPEAT
-        int shift = (key >> 8) & 0xff;
-        if ((shift & 1) != 0) modifiers |= 0x0004;
-        if ((shift & 2) != 0) modifiers |= 0x0002;
-        if ((shift & 4) != 0) modifiers |= 0x0001;
-        _registered = RegisterHotKey(_source.Handle, Id, modifiers, (uint)(key & 0xff));
+        uint modifiers = (uint)setting.Modifiers | 0x4000; // MOD_NOREPEAT
+        _registered = RegisterHotKey(_source.Handle, Id, modifiers, setting.VirtualKey);
         if (!_registered) RegistrationError = Marshal.GetLastWin32Error();
     }
 
@@ -55,6 +51,4 @@ public sealed class GlobalHotKey : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern short VkKeyScanW(char character);
 }
