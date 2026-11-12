@@ -45,7 +45,7 @@
 | AC-27 | `var/repo` が `myvar` 直下の `report` と `myreport` の両方に一致する。 |
 | AC-28 | `var/data/repo` が `myvar/data/report` に一致し、`var/other/data/report`・`var/database/report`・`var/data/sub/report` には一致しない。 |
 | AC-29 | `/var/data/repo` が `work/var/data/report` に一致し、`myvar/data/report` には一致しない。 |
-| AC-30,31,34 | 一覧で Enter または修飾キーなしの左クリックを行い、既定アプリで開く。消失したファイルではエラーを表示し、検索を継続できる。 |
+| AC-30,31,34 | 単クリックでは選択のみ。一覧で Enter または修飾キーなしの左ダブルクリックを行い、既定アプリで開く。消失したファイルではエラーを表示し、検索を継続できる。 |
 | AC-32 | Ctrl / Shift で複数選択してドラッグ。クリックしたファイルが開かない。ドラッグを Esc でキャンセルしても開かない。 |
 | AC-33 | 右クリックで拡張子に対応する従来形式シェルメニューが開く。キャンセル・プロパティなどの実行後も検索・差分更新が継続する。 |
 | AC-35 | 自動検証で ProcessRenderMode が SoftwareOnly と一致する。 |

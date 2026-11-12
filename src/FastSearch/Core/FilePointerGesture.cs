@@ -2,18 +2,18 @@ using System;
 
 namespace FastSearch.Core;
 
-/// <summary>Distinguishes a plain click from selection gestures and a drag, independently of WPF.</summary>
+/// <summary>Distinguishes a double-click from selection gestures and a drag, independently of WPF.</summary>
 public sealed class FilePointerGesture
 {
     private ulong? _pressedId;
     private double _x, _y;
     private bool _allowOpen, _dragged;
-    public void Begin(ulong id, double x, double y, bool allowOpen)
+    public void Begin(ulong id, double x, double y, bool unmodified, int clickCount)
     {
         _pressedId = id;
         _x = x;
         _y = y;
-        _allowOpen = allowOpen;
+        _allowOpen = unmodified && clickCount == 2;
         _dragged = false;
     }
     public bool Move(double x, double y, double thresholdX, double thresholdY)

@@ -164,16 +164,18 @@ Check(SearchEngine.Search(hierarchy, "data", new(SortColumn.Name), default).Leng
     "folder conditions never leak directories into file results");
 
 var gesture = new FilePointerGesture();
-gesture.Begin(11, 10, 10, true);
-Check(!gesture.Move(11, 11, 4, 4) && gesture.End(11), "plain click opens on release of same row");
-gesture.Begin(11, 10, 10, true);
+gesture.Begin(11, 10, 10, true, 1);
+Check(!gesture.Move(11, 11, 4, 4) && !gesture.End(11), "single click selects without opening");
+gesture.Begin(11, 10, 10, true, 2);
+Check(!gesture.Move(11, 11, 4, 4) && gesture.End(11), "double click opens on release of same row");
+gesture.Begin(11, 10, 10, true, 2);
 Check(gesture.Move(14, 10, 4, 4) && !gesture.Move(20, 10, 4, 4) && !gesture.End(11),
     "drag starts once at threshold and can never open a file");
-gesture.Begin(11, 0, 0, false);
+gesture.Begin(11, 0, 0, false, 2);
 Check(!gesture.End(11), "Ctrl/Shift selection does not open a file");
-gesture.Begin(11, 0, 0, true);
+gesture.Begin(11, 0, 0, true, 2);
 Check(!gesture.End(12) && !gesture.End(11), "release on another row cancels opening");
-gesture.Begin(11, 0, 0, true);
+gesture.Begin(11, 0, 0, true, 2);
 gesture.Cancel();
 Check(!gesture.End(11), "deactivation, right-click or canceled drag cannot open a file");
 var batch = new JournalBatch(200, new UsnRecord[]

@@ -400,7 +400,7 @@ public partial class MainWindow : Window
         if (row?.Item is not SearchResult result) return;
         _pressedItem = result;
         var point = e.GetPosition(Results);
-        _gesture.Begin(result.Id, point.X, point.Y, Keyboard.Modifiers == ModifierKeys.None && e.ClickCount == 1);
+        _gesture.Begin(result.Id, point.X, point.Y, Keyboard.Modifiers == ModifierKeys.None, e.ClickCount);
         _deferredSelection = row.IsSelected && Keyboard.Modifiers == ModifierKeys.None;
         // WPF otherwise collapses a multiselection before DragDrop sees it.
         if (_deferredSelection) e.Handled = true;
